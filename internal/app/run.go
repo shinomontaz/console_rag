@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"path/filepath"
 )
 
 func (a *App) Run(ctx context.Context) error {
@@ -61,11 +62,22 @@ func (a *App) handleFile(path string) {
 		return
 	}
 
+	if filepath.Ext(path) == ".md" {
+		log.Printf("File exthension is .md, no need to convert")
+	}
+
+	if filepath.Ext(path) == ".pdf" {
+		log.Printf("File exthension is .pdf, converting PDF to text, it can take a while")
+	}
+
+	if filepath.Ext(path) == ".docx" {
+		log.Printf("This is M$ Word file, convertion would take a while...")
+	}
+
 	// Пока просто логируем
 	log.Printf("Would process file: %s (%d bytes)", path, info.Size())
 
 	// В будущем:
-	// - определить тип (pdf/md/docx)
 	// - прогнать через LegalChunker
 	// - сделать retrieval
 	// - отправить в LLM
