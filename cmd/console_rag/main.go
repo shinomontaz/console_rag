@@ -6,8 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 
 	"console_rag/internal/app"
@@ -45,9 +43,6 @@ func main() {
 	}
 
 	// Вычисляем пути к файлам БД на основе имени документа
-	docBaseName := strings.TrimSuffix(filepath.Base(cfg.ReferenceDoc), filepath.Ext(cfg.ReferenceDoc))
-	cfg.MetadataFile = filepath.Join(cfg.DataDir, docBaseName+"_metadata.json")
-	cfg.DBFile = filepath.Join(cfg.DataDir, docBaseName+".gob")
 
 	// Создаём директорию для данных
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
@@ -56,8 +51,6 @@ func main() {
 
 	log.Printf("Reference document: %s", cfg.ReferenceDoc)
 	log.Printf("Data directory: %s", cfg.DataDir)
-	log.Printf("DB file: %s", cfg.DBFile)
-	log.Printf("Metadata file: %s", cfg.MetadataFile)
 
 	// Создаём app
 	a, err := app.New(&cfg)
