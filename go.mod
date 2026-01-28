@@ -10,3 +10,5 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/yuin/goldmark v1.7.16
 )
+
+require github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
