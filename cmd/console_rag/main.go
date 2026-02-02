@@ -18,6 +18,7 @@ func main() {
 	// Парсим флаги командной строки
 	referenceDoc := flag.String("reference-doc", "", "Path to reference document (required)")
 	dataDir := flag.String("data", "./data", "Data directory for vector DB")
+	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
 	flag.Parse()
 
 	if *referenceDoc == "" {
@@ -56,6 +57,11 @@ func main() {
 	a, err := app.New(&cfg)
 	if err != nil {
 		log.Fatalf("failed to create app: %v", err)
+	}
+
+	// Устанавливаем путь для сохранения результатов (если указан)
+	if *outputFile != "" {
+		a.SetOutputPath(*outputFile)
 	}
 
 	// Инициализируем (проверка Ollama, загрузка БД)

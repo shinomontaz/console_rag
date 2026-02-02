@@ -25,6 +25,7 @@ type App struct {
 	fileMetadata   string
 	embeddingFunc  chromem.EmbeddingFunc
 	chunkerFactory *chunker.Factory
+	outputPath     string
 }
 
 type Metadata struct {
@@ -302,4 +303,8 @@ func (a *App) loadDB() error {
 
 func (a *App) saveDB() error {
 	return a.db.ExportToFile(a.fileDB, true, "", "docs")
+}
+
+func (a *App) SetOutputPath(path string) {
+	a.outputPath = path
 }
