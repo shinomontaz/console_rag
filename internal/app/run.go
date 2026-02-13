@@ -6,17 +6,17 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 func (a *App) Run(ctx context.Context) error {
 	log.Println("Application started")
-	log.Println("Enter file paths (one per line). Ctrl+C to exit.")
+	log.Println("Enter text to analyze (one per line). Ctrl+C to exit.")
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// Увеличим буфер, если пути/строки будут длинные
 	const maxLineSize = 1024 * 1024
 	buf := make([]byte, 64*1024)
 	scanner.Buffer(buf, maxLineSize)
@@ -27,12 +27,10 @@ func (a *App) Run(ctx context.Context) error {
 			log.Println("Shutting down application")
 			return nil
 		default:
-			// читаем строку
 			if !scanner.Scan() {
 				if err := scanner.Err(); err != nil {
 					return fmt.Errorf("stdin error: %w", err)
 				}
-				// EOF
 				log.Println("stdin closed")
 				return nil
 			}
@@ -51,34 +49,49 @@ func (a *App) Run(ctx context.Context) error {
 func (a *App) handleFile(path string) {
 	log.Printf("Received input: %s", path)
 
-	info, err := os.Stat(path)
+	ctx := context.Background()
+
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		ext := filepath.Ext(path)
+		if ext != ".md" && ext != ".txt" && ext != ".pdf" {
+			log.Printf("❌ Unsupported format: %s", ext)
+			return
+		}
+
+		if a.outputPath == "" {
+			timestamp := time.Now().Format("20060102_150405")
+			baseName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			a.outputPath = fmt.Sprintf("%s_analysis_%s.md", baseName, timestamp)
+		}
+
+		if err := a.processInputDocument(ctx, path); err != nil {
+			log.Printf("❌ Processing failed: %v", err)
+		}
+
+		a.outputPath = ""
+		return
+	}
+
+	// Это просто текст - обрабатываем как раньше
+	results, err := a.searchRelevantChunks(ctx, path)
 	if err != nil {
-		log.Printf("File error: %v", err)
+		log.Printf("❌ Search error: %v", err)
 		return
 	}
 
-	if info.IsDir() {
-		log.Printf("Skipping directory: %s", path)
+	log.Printf("🔍 Found %d relevant sections:", len(results))
+	for i, r := range results {
+		log.Printf("   %d. %s (similarity: %.2f)", i+1, r.Section, r.Similarity)
+	}
+
+	log.Printf("\n🤖 Analyzing with LLM...")
+	prompt := a.buildAnalysisPrompt(path, results)
+
+	analysis, err := a.queryLLM(ctx, prompt)
+	if err != nil {
+		log.Printf("❌ LLM error: %v", err)
 		return
 	}
 
-	if filepath.Ext(path) == ".md" {
-		log.Printf("File exthension is .md, no need to convert")
-	}
-
-	if filepath.Ext(path) == ".pdf" {
-		log.Printf("File exthension is .pdf, converting PDF to text, it can take a while")
-	}
-
-	if filepath.Ext(path) == ".docx" {
-		log.Printf("This is M$ Word file, convertion would take a while...")
-	}
-
-	// Пока просто логируем
-	log.Printf("Would process file: %s (%d bytes)", path, info.Size())
-
-	// В будущем:
-	// - прогнать через LegalChunker
-	// - сделать retrieval
-	// - отправить в LLM
+	log.Printf("\n%s\n", analysis)
 }

@@ -25,6 +25,7 @@ type App struct {
 	fileMetadata   string
 	embeddingFunc  chromem.EmbeddingFunc
 	chunkerFactory *chunker.Factory
+	outputPath     string
 }
 
 type Metadata struct {
@@ -66,6 +67,10 @@ func New(cfg *config.Config) (*App, error) {
 }
 
 func (a *App) Init() error {
+	if err := a.validateLLMConfig(); err != nil {
+		return fmt.Errorf("invalid LLM configuration: %w", err)
+	}
+
 	fileInfo, err := os.Stat(a.cfg.ReferenceDoc)
 	if err != nil {
 		return fmt.Errorf("reference document not found: %w", err)
@@ -249,7 +254,6 @@ func readPDF(path string) (string, error) {
 	return result, nil
 }
 
-// Helper to print address nicely in logs
 func trimHostPrefix(addr string) string {
 	if addr == "" {
 		return "localhost"
@@ -302,4 +306,34 @@ func (a *App) loadDB() error {
 
 func (a *App) saveDB() error {
 	return a.db.ExportToFile(a.fileDB, true, "", "docs")
+}
+
+func (a *App) SetOutputPath(path string) {
+	a.outputPath = path
+}
+
+// validateLLMConfig проверяет корректность конфигурации LLM
+func (a *App) validateLLMConfig() error {
+	switch a.cfg.LlmMain.Type {
+	case "openai":
+		if a.cfg.LlmMain.URL == "" {
+			return fmt.Errorf("LLM_MAIN_URL is required for openai type")
+		}
+		log.Printf("✅ LLM Main: OpenAI-compatible API at %s (model: %s)", a.cfg.LlmMain.URL, a.cfg.LlmMain.Model)
+	case "gemini":
+		if a.cfg.LlmMain.Key == "" {
+			return fmt.Errorf("LLM_MAIN_KEY (Gemini API key) is required for gemini type")
+		}
+		log.Printf("✅ LLM Main: Gemini API (model: %s)", a.cfg.LlmMain.Model)
+	default:
+		return fmt.Errorf("unsupported LLM_MAIN_TYPE: %s (supported: openai, gemini)", a.cfg.LlmMain.Type)
+	}
+
+	// Проверяем LLM Embed (всегда openai-compatible)
+	if a.cfg.LlmEmbed.URL == "" {
+		return fmt.Errorf("LLM_EMBED_URL is required")
+	}
+	log.Printf("✅ LLM Embed: %s (model: %s)", a.cfg.LlmEmbed.URL, a.cfg.LlmEmbed.Model)
+
+	return nil
 }
