@@ -6,13 +6,46 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
+	"time"
+
+	tiktoken "github.com/pkoukk/tiktoken-go"
+	"google.golang.org/genai"
 )
 
-// queryLLM отправляет промпт в LLM и возвращает ответ
+// countTokens точно подсчитывает количество токенов в тексте
+// Использует cl100k_base encoding (для GPT-4, Qwen и совместимых моделей)
+func countTokens(text string) int {
+	encoding, err := tiktoken.GetEncoding("cl100k_base")
+	if err != nil {
+		// Fallback на консервативную оценку для русского текста
+		return len(text) / 2
+	}
+	tokens := encoding.Encode(text, nil, nil)
+	return len(tokens)
+}
+
+// queryLLM роутер для выбора провайдера LLM
 func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
-	// Формируем запрос в OpenAI-compatible формате
+	// Логируем размер промпта для отладки
+	tokenCount := countTokens(prompt)
+	log.Printf("📊 Prompt size: %d chars (%d tokens)", len(prompt), tokenCount)
+
+	// Выбор провайдера по типу
+	switch a.cfg.LlmMain.Type {
+	case "gemini":
+		return a.queryGemini(ctx, prompt)
+	case "openai":
+		return a.queryOpenAI(ctx, prompt)
+	default:
+		return "", fmt.Errorf("unknown LLM type: %s (supported: openai, gemini)", a.cfg.LlmMain.Type)
+	}
+}
+
+// queryOpenAI отправляет промпт в OpenAI-compatible API (llama.cpp/qwen) и возвращает ответ
+func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 	reqBody := map[string]interface{}{
 		"model": a.cfg.LlmMain.Model,
 		"messages": []map[string]string{
@@ -40,7 +73,9 @@ func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 	}
 
 	// Отправляем запрос
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 5 * time.Minute, // Для больших промптов
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
@@ -70,6 +105,50 @@ func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 	}
 
 	return response.Choices[0].Message.Content, nil
+}
+
+// queryGemini отправляет промпт в Gemini API и возвращает ответ
+func (a *App) queryGemini(ctx context.Context, prompt string) (string, error) {
+	// Создаём Gemini клиент
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  a.cfg.LlmMain.Key,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create Gemini client: %w", err)
+	}
+
+	// Генерируем контент
+	resp, err := client.Models.GenerateContent(ctx, a.cfg.LlmMain.Model, genai.Text(prompt), &genai.GenerateContentConfig{
+		Temperature:     &a.cfg.Temperature,
+		MaxOutputTokens: int32(a.cfg.MaxTokens),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to generate content: %w", err)
+	}
+
+	if len(resp.Candidates) == 0 {
+		return "", fmt.Errorf("no response from Gemini")
+	}
+
+	candidate := resp.Candidates[0]
+	if candidate.Content == nil {
+		return "", fmt.Errorf("no content in Gemini response")
+	}
+
+	// Извлекаем текст из ответа
+	var responseText strings.Builder
+	for _, part := range candidate.Content.Parts {
+		if part.Text != "" {
+			responseText.WriteString(part.Text)
+		}
+	}
+
+	if responseText.Len() == 0 {
+		return "", fmt.Errorf("empty response from Gemini")
+	}
+
+	return strings.TrimSpace(responseText.String()), nil
 }
 
 // buildSimplePrompt формирует простой промпт без контроля размера
@@ -118,9 +197,9 @@ func (a *App) buildAnalysisPrompt(
 	buf.WriteString(inputText)
 	buf.WriteString("\n>>>\n\n")
 
-	// Проверяем размер до добавления reference chunks
-	currentSize := len(buf.String())
-	availableForRefs := a.cfg.MaxPromptChars - currentSize - 500 // 500 для task description
+	// Проверяем размер до добавления reference chunks (в токенах)
+	currentTokens := countTokens(buf.String())
+	availableTokens := 3500 // 4096 context - 500 для response - 96 запас
 
 	// Группируем reference chunks по секциям
 	grouped := groupBySection(referenceResults)
@@ -129,7 +208,6 @@ func (a *App) buildAnalysisPrompt(
 	refCount := 0
 
 	for section, chunks := range grouped {
-		// Объединяем чанки из одной секции
 		var combined strings.Builder
 		for _, chunk := range chunks {
 			combined.WriteString(chunk.Content)
@@ -137,14 +215,21 @@ func (a *App) buildAnalysisPrompt(
 		}
 		combinedText := combined.String()
 
-		// Проверяем, влезет ли
-		entrySize := len(section) + len(combinedText) + 100
-		if currentSize+entrySize > availableForRefs {
-			// Обрезаем текст
-			maxTextLen := availableForRefs - currentSize - len(section) - 100
-			if maxTextLen > 0 && maxTextLen < len(combinedText) {
-				combinedText = combinedText[:maxTextLen] + "..."
-			} else if maxTextLen <= 0 {
+		// Проверяем, влезет ли (в токенах)
+		entryText := fmt.Sprintf("%d. [Section: %s]\n%s\n", refCount+1, section, combinedText)
+		entryTokens := countTokens(entryText)
+		if currentTokens+entryTokens > availableTokens {
+			// Обрезаем текст по токенам
+			maxTextTokens := availableTokens - currentTokens - countTokens(section) - 50
+			if maxTextTokens > 0 {
+				// Итеративно обрезаем до нужного размера токенов
+				for countTokens(combinedText) > maxTextTokens && len(combinedText) > 0 {
+					combinedText = combinedText[:len(combinedText)*9/10] // Обрезаем по 10%
+				}
+				combinedText += "..."
+				entryText = fmt.Sprintf("%d. [Section: %s]\n%s\n", refCount+1, section, combinedText)
+				entryTokens = countTokens(entryText)
+			} else {
 				break // Больше не влезает
 			}
 		}
@@ -156,24 +241,14 @@ func (a *App) buildAnalysisPrompt(
 		buf.WriteString(combinedText)
 		buf.WriteString(">>>\n\n")
 
-		currentSize += entrySize
+		currentTokens += entryTokens
 
-		// Не добавляем слишком много секций
-		if refCount >= 5 {
+		if refCount >= 3 {
 			break
 		}
 	}
 
-	// Task description
-	buf.WriteString("Task:\n")
-	buf.WriteString("1. Сравни analyzed text с reference sections\n")
-	buf.WriteString("2. Найди противоречия, несоответствия, риски\n")
-	buf.WriteString("3. Оцени степень соответствия\n")
-	buf.WriteString("4. Дай конкретные рекомендации\n\n")
-	buf.WriteString("Output format:\n")
-	buf.WriteString("- Status: [✅ Соответствует / ⚠️ Частичное соответствие / ❌ Противоречие]\n")
-	buf.WriteString("- Issues: <список проблем>\n")
-	buf.WriteString("- Recommendations: <рекомендации>\n")
+	buf.WriteString("\nCompare texts. Find contradictions and risks. Output:\nStatus: ✅/⚠️/❌\nIssues: ...\nRecommendations: ...\n")
 
 	return buf.String()
 }

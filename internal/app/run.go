@@ -17,7 +17,6 @@ func (a *App) Run(ctx context.Context) error {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// Увеличим буфер, если пути/строки будут длинные
 	const maxLineSize = 1024 * 1024
 	buf := make([]byte, 64*1024)
 	scanner.Buffer(buf, maxLineSize)
@@ -28,12 +27,10 @@ func (a *App) Run(ctx context.Context) error {
 			log.Println("Shutting down application")
 			return nil
 		default:
-			// читаем строку
 			if !scanner.Scan() {
 				if err := scanner.Err(); err != nil {
 					return fmt.Errorf("stdin error: %w", err)
 				}
-				// EOF
 				log.Println("stdin closed")
 				return nil
 			}
@@ -54,18 +51,14 @@ func (a *App) handleFile(path string) {
 
 	ctx := context.Background()
 
-	// Проверяем, это файл или текст
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		// Это файл - обрабатываем через processInputDocument
 		ext := filepath.Ext(path)
 		if ext != ".md" && ext != ".txt" && ext != ".pdf" {
 			log.Printf("❌ Unsupported format: %s", ext)
 			return
 		}
 
-		// Определяем путь для сохранения результатов
 		if a.outputPath == "" {
-			// Автоматическое имя файла
 			timestamp := time.Now().Format("20060102_150405")
 			baseName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			a.outputPath = fmt.Sprintf("%s_analysis_%s.md", baseName, timestamp)
@@ -75,7 +68,6 @@ func (a *App) handleFile(path string) {
 			log.Printf("❌ Processing failed: %v", err)
 		}
 
-		// Сбрасываем outputPath для следующего файла
 		a.outputPath = ""
 		return
 	}

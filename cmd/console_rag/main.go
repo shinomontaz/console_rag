@@ -21,30 +21,28 @@ func main() {
 	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
 	flag.Parse()
 
+	// *referenceDoc = "../../docs/LaborCodexRus.md"
+	// *dataDir = "../../data"
+
 	if *referenceDoc == "" {
 		log.Fatal("Error: --reference-doc flag is required\nUsage: console_rag --reference-doc=/path/to/document.md")
 	}
 
-	// Проверяем существование файла
 	if _, err := os.Stat(*referenceDoc); os.IsNotExist(err) {
 		log.Fatalf("Error: reference document not found: %s", *referenceDoc)
 	}
 
-	// Устанавливаем env переменные для парсинга
 	os.Setenv("REFERENCE_DOC", *referenceDoc)
 	os.Setenv("DATA_DIR", *dataDir)
 
-	// Загружаем .env (опционально)
 	_ = godotenv.Load()
 
-	// Загружаем конфиг
 	cfg := config.Config{}
 	if err := config.Init(&cfg); err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
 	// Вычисляем пути к файлам БД на основе имени документа
-
 	// Создаём директорию для данных
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		log.Fatalf("failed to create data directory: %v", err)
@@ -53,23 +51,19 @@ func main() {
 	log.Printf("Reference document: %s", cfg.ReferenceDoc)
 	log.Printf("Data directory: %s", cfg.DataDir)
 
-	// Создаём app
 	a, err := app.New(&cfg)
 	if err != nil {
 		log.Fatalf("failed to create app: %v", err)
 	}
 
-	// Устанавливаем путь для сохранения результатов (если указан)
 	if *outputFile != "" {
 		a.SetOutputPath(*outputFile)
 	}
 
-	// Инициализируем (проверка Ollama, загрузка БД)
 	if err := a.Init(); err != nil {
 		log.Fatalf("failed to initialize app: %v", err)
 	}
 
-	// Контекст с сигналами завершения
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
