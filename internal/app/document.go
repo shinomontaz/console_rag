@@ -78,6 +78,9 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 			result.ReferenceCount = len(searchResults)
 
 			prompt := a.buildAnalysisPrompt(ch.Text, searchResults)
+			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			log.Printf("%s", prompt)
+			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 			analysis, err := a.queryLLM(ctx, prompt)
 			if err != nil {
 				result.Error = err

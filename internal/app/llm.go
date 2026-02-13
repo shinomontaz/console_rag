@@ -8,8 +8,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
 	"google.golang.org/genai"
@@ -33,7 +35,6 @@ func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 	tokenCount := countTokens(prompt)
 	log.Printf("📊 Prompt size: %d chars (%d tokens)", len(prompt), tokenCount)
 
-	// Выбор провайдера по типу
 	switch a.cfg.LlmMain.Type {
 	case "gemini":
 		return a.queryGemini(ctx, prompt)
@@ -60,7 +61,6 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Создаём HTTP запрос
 	url := a.cfg.LlmMain.URL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -72,7 +72,6 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 		req.Header.Set("Authorization", "Bearer "+a.cfg.LlmMain.Key)
 	}
 
-	// Отправляем запрос
 	client := &http.Client{
 		Timeout: 5 * time.Minute, // Для больших промптов
 	}
@@ -87,7 +86,6 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("LLM returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Парсим ответ
 	var response struct {
 		Choices []struct {
 			Message struct {
@@ -109,7 +107,6 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 
 // queryGemini отправляет промпт в Gemini API и возвращает ответ
 func (a *App) queryGemini(ctx context.Context, prompt string) (string, error) {
-	// Создаём Gemini клиент
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  a.cfg.LlmMain.Key,
 		Backend: genai.BackendGeminiAPI,
@@ -118,7 +115,6 @@ func (a *App) queryGemini(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 
-	// Генерируем контент
 	resp, err := client.Models.GenerateContent(ctx, a.cfg.LlmMain.Model, genai.Text(prompt), &genai.GenerateContentConfig{
 		Temperature:     &a.cfg.Temperature,
 		MaxOutputTokens: int32(a.cfg.MaxTokens),
@@ -136,7 +132,6 @@ func (a *App) queryGemini(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("no content in Gemini response")
 	}
 
-	// Извлекаем текст из ответа
 	var responseText strings.Builder
 	for _, part := range candidate.Content.Parts {
 		if part.Text != "" {
@@ -151,37 +146,26 @@ func (a *App) queryGemini(ctx context.Context, prompt string) (string, error) {
 	return strings.TrimSpace(responseText.String()), nil
 }
 
-// buildSimplePrompt формирует простой промпт без контроля размера
-func buildSimplePrompt(
-	inputText string,
-	referenceResults []SearchResult,
-) string {
-	var buf strings.Builder
+// cleanContentForPrompt - финальная очистка для промпта
+func cleanContentForPrompt(content string) string {
+	content = strings.TrimSpace(content)
 
-	buf.WriteString("Ты эксперт по сравнению юридических документов.\n\n")
-	buf.WriteString("Analyzed text:\n<<<\n")
-	buf.WriteString(inputText)
-	buf.WriteString("\n>>>\n\n")
-
-	buf.WriteString("Relevant sections from reference document:\n")
-	for i, r := range referenceResults {
-		buf.WriteString(fmt.Sprintf("%d. [Section: %s] (similarity: %.2f)\n", i+1, r.Section, r.Similarity))
-		buf.WriteString("<<<\n")
-		buf.WriteString(r.Content)
-		buf.WriteString("\n>>>\n\n")
+	// Убрать обрезанные слова в начале
+	if len(content) > 0 && unicode.IsLower(rune(content[0])) {
+		parts := strings.Fields(content)
+		if len(parts) > 1 {
+			content = strings.Join(parts[1:], " ")
+		}
 	}
 
-	buf.WriteString("Task:\n")
-	buf.WriteString("1. Сравни analyzed text с reference sections\n")
-	buf.WriteString("2. Найди противоречия, несоответствия, риски\n")
-	buf.WriteString("3. Оцени степень соответствия\n")
-	buf.WriteString("4. Дай конкретные рекомендации\n\n")
-	buf.WriteString("Output format:\n")
-	buf.WriteString("- Status: [✅ Соответствует / ⚠️ Частичное соответствие / ❌ Противоречие]\n")
-	buf.WriteString("- Issues: <список проблем>\n")
-	buf.WriteString("- Recommendations: <рекомендации>\n")
+	// Убрать обрезанные слова в конце
+	content = strings.TrimRight(content, " -,")
 
-	return buf.String()
+	// Множественные пробелы → один пробел
+	re := regexp.MustCompile(`\s+`)
+	content = re.ReplaceAllString(content, " ")
+
+	return content
 }
 
 // buildAnalysisPrompt формирует промпт с контролем размера для gemma3
@@ -191,64 +175,46 @@ func (a *App) buildAnalysisPrompt(
 ) string {
 	var buf strings.Builder
 
-	systemPrompt := "Ты эксперт по сравнению юридических документов."
-	buf.WriteString(systemPrompt)
-	buf.WriteString("\n\nAnalyzed text:\n<<<\n")
-	buf.WriteString(inputText)
-	buf.WriteString("\n>>>\n\n")
+	// Системный промпт (универсальный)
+	buf.WriteString("Сравни проверяемый текст с эталоном. Найди несоответствия.\n\n")
 
-	// Проверяем размер до добавления reference chunks (в токенах)
-	currentTokens := countTokens(buf.String())
-	availableTokens := 3500 // 4096 context - 500 для response - 96 запас
+	// Проверяемый текст
+	buf.WriteString("ПРОВЕРЯЕМЫЙ ТЕКСТ:\n")
+	buf.WriteString(strings.TrimSpace(inputText))
+	buf.WriteString("\n\n")
 
-	// Группируем reference chunks по секциям
-	grouped := groupBySection(referenceResults)
+	// Эталон (максимум 3 чанка)
+	buf.WriteString("ЭТАЛОН:\n")
 
-	buf.WriteString("Relevant sections from reference document:\n")
-	refCount := 0
-
-	for section, chunks := range grouped {
-		var combined strings.Builder
-		for _, chunk := range chunks {
-			combined.WriteString(chunk.Content)
-			combined.WriteString("\n")
-		}
-		combinedText := combined.String()
-
-		// Проверяем, влезет ли (в токенах)
-		entryText := fmt.Sprintf("%d. [Section: %s]\n%s\n", refCount+1, section, combinedText)
-		entryTokens := countTokens(entryText)
-		if currentTokens+entryTokens > availableTokens {
-			// Обрезаем текст по токенам
-			maxTextTokens := availableTokens - currentTokens - countTokens(section) - 50
-			if maxTextTokens > 0 {
-				// Итеративно обрезаем до нужного размера токенов
-				for countTokens(combinedText) > maxTextTokens && len(combinedText) > 0 {
-					combinedText = combinedText[:len(combinedText)*9/10] // Обрезаем по 10%
-				}
-				combinedText += "..."
-				entryText = fmt.Sprintf("%d. [Section: %s]\n%s\n", refCount+1, section, combinedText)
-				entryTokens = countTokens(entryText)
-			} else {
-				break // Больше не влезает
-			}
-		}
-
-		refCount++
-		buf.WriteString(fmt.Sprintf("%d. [Section: %s] (similarity: %.2f)\n",
-			refCount, section, chunks[0].Similarity))
-		buf.WriteString("<<<\n")
-		buf.WriteString(combinedText)
-		buf.WriteString(">>>\n\n")
-
-		currentTokens += entryTokens
-
-		if refCount >= 3 {
+	addedCount := 0
+	for _, result := range referenceResults {
+		if addedCount >= 3 {
 			break
 		}
+
+		cleanContent := cleanContentForPrompt(result.Content)
+
+		// Пропускаем слишком короткие
+		if len(cleanContent) < 30 {
+			continue
+		}
+
+		buf.WriteString(fmt.Sprintf("%d. %s\n", addedCount+1, cleanContent))
+		addedCount++
 	}
 
-	buf.WriteString("\nCompare texts. Find contradictions and risks. Output:\nStatus: ✅/⚠️/❌\nIssues: ...\nRecommendations: ...\n")
+	if addedCount == 0 {
+		buf.WriteString("(нет релевантных разделов)\n")
+	}
+
+	buf.WriteString("\n")
+
+	// Инструкции (короткие)
+	buf.WriteString("Что не совпадает?\n")
+	buf.WriteString("Ответ:\n")
+	buf.WriteString("Статус: ✅/⚠️/❌\n")
+	buf.WriteString("Несоответствия: ...\n")
+	buf.WriteString("Исправления: ...\n")
 
 	return buf.String()
 }

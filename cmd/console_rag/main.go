@@ -21,8 +21,8 @@ func main() {
 	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
 	flag.Parse()
 
-	// *referenceDoc = "../../docs/LaborCodexRus.md"
-	// *dataDir = "../../data"
+	*referenceDoc = "../../docs/LaborCodexRus.md"
+	*dataDir = "../../data"
 
 	if *referenceDoc == "" {
 		log.Fatal("Error: --reference-doc flag is required\nUsage: console_rag --reference-doc=/path/to/document.md")

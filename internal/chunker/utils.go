@@ -9,6 +9,8 @@ import (
 // CreateChunk создаёт чанк с автоматической генерацией ID
 func CreateChunk(text, source, section string, metadata map[string]string) Chunk {
 	text = strings.TrimSpace(text)
+	text = cleanChunk(text)
+
 	hash := sha256.Sum256([]byte(text + source))
 
 	if metadata == nil {
