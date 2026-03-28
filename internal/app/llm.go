@@ -48,7 +48,7 @@ func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 // queryOpenAI отправляет промпт в OpenAI-compatible API (llama.cpp/qwen) и возвращает ответ
 func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 	reqBody := map[string]interface{}{
-		"model": a.cfg.LlmMain.Model,
+//		"model": a.cfg.LlmMain.Model,
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
@@ -175,16 +175,18 @@ func (a *App) buildAnalysisPrompt(
 ) string {
 	var buf strings.Builder
 
-	// Системный промпт (универсальный)
-	buf.WriteString("Сравни проверяемый текст с эталоном. Найди несоответствия.\n\n")
+	buf.WriteString(a.cfg.CustomPromt.Header)
+	buf.WriteString("\n\n")
 
-	// Проверяемый текст
-	buf.WriteString("ПРОВЕРЯЕМЫЙ ТЕКСТ:\n")
+	buf.WriteString(a.cfg.CustomPromt.Chunk)
+	buf.WriteString("\n")
+
 	buf.WriteString(strings.TrimSpace(inputText))
 	buf.WriteString("\n\n")
 
 	// Эталон (максимум 3 чанка)
-	buf.WriteString("ЭТАЛОН:\n")
+	buf.WriteString(a.cfg.CustomPromt.Etalon)
+	buf.WriteString("\n")
 
 	addedCount := 0
 	for _, result := range referenceResults {
@@ -209,12 +211,8 @@ func (a *App) buildAnalysisPrompt(
 
 	buf.WriteString("\n")
 
-	// Инструкции (короткие)
-	buf.WriteString("Что не совпадает?\n")
-	buf.WriteString("Ответ:\n")
-	buf.WriteString("Статус: ✅/⚠️/❌\n")
-	buf.WriteString("Несоответствия: ...\n")
-	buf.WriteString("Исправления: ...\n")
+	buf.WriteString(a.cfg.CustomPromt.Footer)
+	buf.WriteString("\n")
 
 	return buf.String()
 }

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"strings"
+
 	"github.com/caarlos0/env/v10"
 )
 
@@ -11,6 +13,13 @@ type Llm struct {
 	Key   string `env:"KEY"`
 }
 
+type Promt struct {
+	Header string `env:"HEADER"`
+	Footer string `env:"FOOTER"`
+	Etalon string `env:"ETALON"`
+	Chunk  string `env:"CHUNK"`
+}
+
 type Config struct {
 	ReferenceDoc string `env:"REFERENCE_DOC"`
 	DataDir      string `env:"DATA_DIR" envDefault:"./data"`
@@ -19,6 +28,7 @@ type Config struct {
 	ChunkMethod  string `env:"CHUNK_METHOD" envDefault:"markdown"`
 	ChunkSize    int    `env:"CHUNK_SIZE" envDefault:"1000"`
 	ChunkOverlap int    `env:"CHUNK_OVERLAP" envDefault:"200"`
+	CustomPromt  Promt  `envPrefix:"CUSTOM_PROMPT_"`
 
 	// Параметры векторного поиска
 	TopK          int     `env:"TOP_K" envDefault:"5"`
@@ -33,6 +43,31 @@ type Config struct {
 	MaxConcurrency int `env:"MAX_CONCURRENCY" envDefault:"3"`
 }
 
-func Init(cfg interface{}) error {
-	return env.Parse(cfg)
+func Init(cfg *Config) error {
+	err := env.Parse(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Убираем кавычки если есть
+	cfg.CustomPromt.Header = strings.ReplaceAll(strings.Trim(cfg.CustomPromt.Header, `"`), "\\n", "\n")
+	cfg.CustomPromt.Chunk = strings.ReplaceAll(strings.Trim(cfg.CustomPromt.Chunk, `"`), "\\n", "\n")
+	cfg.CustomPromt.Etalon = strings.ReplaceAll(strings.Trim(cfg.CustomPromt.Etalon, `"`), "\\n", "\n")
+	cfg.CustomPromt.Footer = strings.ReplaceAll(strings.Trim(cfg.CustomPromt.Footer, `"`), "\\n", "\n")
+
+	// Применяем дефолты для CustomPromt если пусто
+	if cfg.CustomPromt.Header == "" {
+		cfg.CustomPromt.Header = "Сравни проверяемый текст с эталоном. Найди несоответствия."
+	}
+	if cfg.CustomPromt.Chunk == "" {
+		cfg.CustomPromt.Chunk = "ПРОВЕРЯЕМЫЙ ТЕКСТ:"
+	}
+	if cfg.CustomPromt.Etalon == "" {
+		cfg.CustomPromt.Etalon = "ЭТАЛОН:"
+	}
+	if cfg.CustomPromt.Footer == "" {
+		cfg.CustomPromt.Footer = "Что не совпадает?\nОтвет:\nСтатус: ✅/⚠️/❌\nНесоответствия: ...\nИсправления: ..."
+	}
+
+	return nil
 }
