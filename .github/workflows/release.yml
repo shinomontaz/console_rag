@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Build binaries
+      run: |
+        # Windows
+        GOOS=windows GOARCH=amd64 go build -o console_rag-windows-amd64.exe ./cmd/console_rag
+        
+        # Linux
+        GOOS=linux GOARCH=amd64 go build -o console_rag-linux-amd64 ./cmd/console_rag
+        
+        # macOS
+        GOOS=darwin GOARCH=amd64 go build -o console_rag-darwin-amd64 ./cmd/console_rag
+        GOOS=darwin GOARCH=arm64 go build -o console_rag-darwin-arm64 ./cmd/console_rag
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          console_rag-windows-amd64.exe
+          console_rag-linux-amd64
+          console_rag-darwin-amd64
+          console_rag-darwin-arm64
+          example.env
+          README.md
+        body: |
+          ## Установка
+          
+          1. Скачайте бинарник для вашей ОС
+          2. Переименуйте `example.env` в `.env`
+          3. Настройте `.env` файл (см. README.md)
+          4. Запустите: `./console_rag --reference-doc=/path/to/document.md`
+          
+          ## Поддерживаемые платформы
+          - Windows (amd64)
+          - Linux (amd64)
+          - macOS (Intel и Apple Silicon)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,7 +4,7 @@
 
 ## Основной use case
 
-Анализ некоторых юридических документов, договоров и актов на соответствие другому документу, предположительно своду законов, кодексу или просто другому документу, чтобы это ни значило.
+Анализ юридических документов, договоров и актов на соответствие другому документу (Трудовой кодекс, Налоговый кодекс и т.д.).
 
 ## Возможности
 
@@ -12,184 +12,36 @@
 - ✅ Адаптивный chunking для Markdown (автоопределение структуры)
 - ✅ Simple chunking для plain text с overlap
 - ✅ Поддержка форматов: `.md`, `.txt`, `.pdf`
-- ✅ Интеграция с llama.cpp для embeddings
+- ✅ Интеграция с OpenAI-совместимыми API (llama.cpp, qwen) и Google Gemini
 - ✅ Персистентная векторная БД (chromem-go)
+- ✅ Настраиваемые промпты для анализа
+- ✅ Параллельная обработка больших документов
+## Быстрый старт
 
-## Архитектура
+### Скачать релиз
 
-### Модульная система chunker'ов
+1. Перейдите в [Releases](https://github.com/shinomontaz/console_rag/releases)
+2. Скачайте бинарник для вашей ОС
+3. Скачайте [example.env](example.env)
 
-**Интерфейс Chunker:**
-```go
-type Chunker interface {
-    Chunk(content, source string) ([]Chunk, error)
-    Name() string
-}
-```
+### Настройка
 
-**Реализации:**
-
-1. **MarkdownChunker** - адаптивный chunker для Markdown:
-   - Автоматический анализ структуры документа
-   - Выбор стратегии: по заголовкам (H2-H4), по параграфам, или по размеру
-   - Умный overlap для подразделов внутри статей
-   - Разбиение больших секций с сохранением контекста
-
-2. **SimpleChunker** - для plain text:
-   - Разбиение по параграфам (если есть)
-   - Разбиение по размеру с overlap
-   - Fallback для текстов без структуры
-
-### Стратегии chunking для Markdown
-
-**Автоматический выбор:**
-- Если есть ≥3 заголовков H2 → разбиение по статьям
-- Если есть ≥5 заголовков H3 → разбиение по подразделам
-- Если есть ≥10 заголовков H4 → разбиение по пунктам
-- Если параграфов ≥5 → разбиение по параграфам
-- Иначе → простое разбиение по размеру
-
-**Overlap:**
-- Между статьями (H2) - overlap НЕ используется
-- Между подразделами (H3+) - overlap используется для контекста
-- Для plain text - overlap всегда используется
-
-## Установка
-
-```bash
-# Клонировать репозиторий
-git clone <repo-url>
-cd console_rag
-
-# Установить зависимости
-go mod tidy
-```
-
-## Конфигурация
-
-Создайте `.env` файл на основе `example.env`:
-
+1. Переименуйте [example.env](example.env) в `.env`:
 ```bash
 cp example.env .env
 ```
 
-Отредактируйте параметры:
+2. Отредактируйте .env - укажите ваши API ключи и URL:
 
-```env
-# LLM для генерации ответов
-LLM_MAIN_URL=https://gemma.cyberden.ru/v1
-LLM_MAIN_MODEL=gemma2:2b
-LLM_MAIN_KEY=your-main-token-here
-
+```
+# LLM для генерации ответов (OpenAI-совместимый API)
+LLM_MAIN_URL=https://your-api.com
+LLM_MAIN_MODEL=qwen2.5-3b-instruct
+LLM_MAIN_KEY=your-key-here
+LLM_MAIN_TYPE=openai
+ 
 # LLM для embeddings
-LLM_EMBED_URL=https://nomic-embed-text.cyberden.ru/v1
+LLM_EMBED_URL=https://your-embed-api.com/v1
 LLM_EMBED_MODEL=nomic-embed-text
-LLM_EMBED_KEY=your-embed-token-here
-
-# Параметры chunking
-CHUNK_METHOD=markdown          # или "simple" для plain text
-CHUNK_SIZE=2000               # Размер чанка в символах
-CHUNK_OVERLAP=200             # Overlap между чанками
-
-# Директория для данных
-DATA_DIR=./data
+LLM_EMBED_KEY=your-embed-key
 ```
-
-## Использование
-
-### Базовый запуск
-
-```bash
-go run cmd/console_rag/main.go --reference-doc=/path/to/document.md
-```
-
-### С кастомной директорией для данных
-
-```bash
-go run cmd/console_rag/main.go \
-  --reference-doc=/path/to/TK_RF.md \
-  --data=/custom/data/dir
-```
-
-### Первый запуск
-
-При первом запуске приложение:
-1. Проверит доступность llama.cpp эндпоинтов
-2. Прочитает reference document
-3. Выберет оптимальную стратегию chunking
-4. Разобьёт документ на чанки
-5. Векторизует чанки через llama.cpp
-6. Сохранит векторную БД в `./data/<document_name>.gob`
-
-Пример вывода:
-```
-📚 Indexing reference document: TK_RF.md
-📄 File size: 245678 bytes
-🔧 Using chunker: markdown
-📊 [markdown] Document structure: headings=map[2:156 3:45], paragraphs=890, size=245678
-🎯 [markdown] Selected strategy: heading (level 2)
-✅ [markdown] Created 156 chunks
-🔄 Adding chunks to vector database...
-   Progress: 156/156 chunks added
-✅ Successfully added 156/156 chunks to vector database
-💾 Saving vector database...
-✅ Reference document indexed successfully
-```
-
-### Повторный запуск
-
-При повторном запуске:
-- Если файл не изменился → загрузка из БД (быстро)
-- Если файл изменился → переиндексация
-
-## Структура проекта
-
-```
-console_rag/
-├── cmd/
-│   └── console_rag/
-│       └── main.go              # Точка входа
-├── internal/
-│   ├── config/
-│   │   └── config.go            # Конфигурация
-│   ├── chunker/                 # Модульная система chunker'ов
-│   │   ├── types.go             # Интерфейс и типы
-│   │   ├── utils.go             # Утилиты
-│   │   ├── markdown.go          # Адаптивный markdown chunker
-│   │   ├── simple.go            # Simple chunker для plain text
-│   │   └── factory.go           # Фабрика chunker'ов
-│   └── app/
-│       ├── app.go               # Основная логика
-│       ├── index.go             # Индексация документов
-│       └── run.go               # Консольный интерфейс (TODO)
-├── data/                        # Векторные БД (создаётся автоматически)
-├── example.env                  # Пример конфигурации
-├── go.mod
-└── README.md
-```
-
-## Зависимости
-
-- `github.com/philippgille/chromem-go` - векторная БД
-- `github.com/yuin/goldmark` - парсинг Markdown
-- `github.com/ledongthuc/pdf` - извлечение текста из PDF
-- `github.com/caarlos0/env/v10` - парсинг env переменных
-- `github.com/joho/godotenv` - загрузка .env файлов
-
-### Персистентность
-
-- Векторная БД сохраняется в `<document_name>.gob`
-- Метаданные в `<document_name>_metadata.json`
-- Автоматическая проверка изменений файла
-- Переиндексация только при изменении
-
-## TODO
-
-- [ ] Реализовать консольный интерфейс для запросов
-- [ ] Добавить интеграцию с LLM для генерации ответов
-- [ ] Добавить поддержку DOCX
-- [ ] Добавить веб-интерфейс
-
-## Лицензия
-
-MIT
