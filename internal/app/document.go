@@ -46,10 +46,12 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 	log.Printf("📦 Split into %d chunks\n", len(chunks))
 
 	// Semaphore для контроля concurrency
-	sem := make(chan struct{}, 2 /*a.cfg.MaxConcurrency*/)
+	sem := make(chan struct{}, a.cfg.MaxConcurrency)
 
 	var mu sync.Mutex
 	results := make([]*AnalysisResult, len(chunks))
+
+	//	chunks = chunks[:5]
 
 	var wg sync.WaitGroup
 	for i, chunk := range chunks {
@@ -78,6 +80,9 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 			result.ReferenceCount = len(searchResults)
 
 			prompt := a.buildAnalysisPrompt(ch.Text, searchResults)
+			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			log.Printf("%s", prompt)
+			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 			analysis, err := a.queryLLM(ctx, prompt)
 			if err != nil {
 				result.Error = err

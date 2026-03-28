@@ -20,6 +20,7 @@ func (s *TextChunker) Name() string {
 	return "simple"
 }
 
+// Chunk разбивает текст на чанки, сначала пытаясь по параграфам, затем по размеру
 func (s *TextChunker) Chunk(content, source string) ([]Chunk, error) {
 	// Пытаемся разбить по параграфам если они есть
 	if strings.Contains(content, "\n\n") {

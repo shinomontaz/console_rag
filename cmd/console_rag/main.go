@@ -21,8 +21,8 @@ func main() {
 	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
 	flag.Parse()
 
-	// *referenceDoc = "../../docs/LaborCodexRus.md"
-	// *dataDir = "../../data"
+	//	*referenceDoc = "../../docs/LaborCodexRus.md"
+	//	*dataDir = "../../data"
 
 	if *referenceDoc == "" {
 		log.Fatal("Error: --reference-doc flag is required\nUsage: console_rag --reference-doc=/path/to/document.md")
@@ -36,7 +36,6 @@ func main() {
 	os.Setenv("DATA_DIR", *dataDir)
 
 	_ = godotenv.Load()
-
 	cfg := config.Config{}
 	if err := config.Init(&cfg); err != nil {
 		log.Fatalf("failed to load config: %v", err)
