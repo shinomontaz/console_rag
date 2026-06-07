@@ -22,6 +22,7 @@ type Promt struct {
 
 type Config struct {
 	ReferenceDoc string `env:"REFERENCE_DOC"`
+	CheckDoc     string `env:"CHECK_DOC"`
 	DataDir      string `env:"DATA_DIR" envDefault:"./data"`
 	LlmMain      Llm    `envPrefix:"LLM_MAIN_"`
 	LlmEmbed     Llm    `envPrefix:"LLM_EMBED_"`

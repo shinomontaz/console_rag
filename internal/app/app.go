@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +25,7 @@ type App struct {
 	embeddingFunc  chromem.EmbeddingFunc
 	chunkerFactory *chunker.Factory
 	outputPath     string
+	logger         Logger
 }
 
 type Metadata struct {
@@ -50,13 +50,14 @@ func New(cfg *config.Config) (*App, error) {
 		cfg:            cfg,
 		metadata:       &Metadata{Files: make(map[string]FileInfo)},
 		chunkerFactory: chunker.NewFactory(chunkerConfig),
+		logger:         &ConsoleLogger{},
 	}
 
 	docBaseName := strings.TrimSuffix(filepath.Base(cfg.ReferenceDoc), filepath.Ext(cfg.ReferenceDoc))
 	app.fileMetadata = filepath.Join(cfg.DataDir, docBaseName+"_metadata.json")
 	app.fileDB = filepath.Join(cfg.DataDir, docBaseName+".gob")
-	log.Printf("DB file: %s", app.fileDB)
-	log.Printf("Metadata file: %s", app.fileMetadata)
+	app.logger.Infof("DB file: %s", app.fileDB)
+	app.logger.Infof("Metadata file: %s", app.fileMetadata)
 
 	normalized := true
 	app.embeddingFunc = chromem.NewEmbeddingFuncOpenAICompat(cfg.LlmEmbed.URL, cfg.LlmEmbed.Key, cfg.LlmEmbed.Model, &normalized)
@@ -78,17 +79,17 @@ func (a *App) Init() error {
 
 	// Check if DB exists for this document
 	if _, err := os.Stat(a.fileDB); err == nil {
-		log.Printf("💾 Found existing DB, loading...")
+		a.logger.Infof("💾 Found existing DB, loading...")
 		if err := a.loadDB(); err != nil {
 			return fmt.Errorf("failed to load database: %w", err)
 		}
 		_ = a.loadMetadata()
-		log.Printf("✅ Database loaded")
+		a.logger.Infof("✅ Database loaded")
 
 		return nil
 	}
 
-	log.Printf("📚 No DB found, indexing document...")
+	a.logger.Infof("📚 No DB found, indexing document...")
 	if err := a.indexDocument(fileInfo); err != nil {
 		return fmt.Errorf("failed to index document: %w", err)
 	}
@@ -99,24 +100,24 @@ func (a *App) Init() error {
 func (a *App) indexDocument(fileInfo os.FileInfo) error {
 	ctx := context.Background()
 
-	content, err := readFile(a.cfg.ReferenceDoc)
+	content, err := a.readFile(a.cfg.ReferenceDoc)
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	log.Printf("📄 File size: %d bytes", len(content))
+	a.logger.Infof("📄 File size: %d bytes", len(content))
 
 	chunkr, err := a.chunkerFactory.GetChunker(a.cfg.ReferenceDoc, a.cfg.ChunkMethod)
 	if err != nil {
 		return fmt.Errorf("failed to get chunker: %w", err)
 	}
 
-	log.Printf("🔧 Using chunker: %s", chunkr.Name())
+	a.logger.Infof("🔧 Using chunker: %s", chunkr.Name())
 
 	chunks, err := chunkr.Chunk(content, filepath.Base(a.cfg.ReferenceDoc))
 	if err != nil {
-		log.Printf("⚠️  Markdown chunker failed: %v", err)
-		log.Printf("🔄 Falling back to text chunker...")
+		a.logger.Errorf("⚠️  Markdown chunker failed: %v", err)
+		a.logger.Infof("🔄 Falling back to text chunker...")
 
 		textChunker := chunker.NewTextChunker(chunker.Config{
 			MaxChunkSize: a.cfg.ChunkSize,
@@ -128,14 +129,14 @@ func (a *App) indexDocument(fileInfo os.FileInfo) error {
 			return fmt.Errorf("text chunker also failed: %w", err)
 		}
 
-		log.Printf("✅ Text chunker succeeded")
+		a.logger.Infof("✅ Text chunker succeeded")
 	}
 
 	if len(chunks) == 0 {
 		return fmt.Errorf("no chunks created from document")
 	}
 
-	log.Printf("📦 Created %d chunks", len(chunks))
+	a.logger.Infof("📦 Created %d chunks", len(chunks))
 
 	coll := a.db.GetCollection("docs", a.embeddingFunc)
 	if coll == nil {
@@ -145,7 +146,7 @@ func (a *App) indexDocument(fileInfo os.FileInfo) error {
 		}
 	}
 
-	log.Printf("🔄 Adding chunks to vector database...")
+	a.logger.Infof("🔄 Adding chunks to vector database...")
 	successCount := 0
 	for i, chunk := range chunks {
 		doc := chromem.Document{
@@ -162,13 +163,13 @@ func (a *App) indexDocument(fileInfo os.FileInfo) error {
 
 		err := coll.AddDocument(ctx, doc)
 		if err != nil {
-			log.Printf("⚠️  Failed to add chunk %d (%s): %v", i+1, chunk.ID, err)
+			a.logger.Errorf("⚠️  Failed to add chunk %d (%s): %v", i+1, chunk.ID, err)
 		} else {
 			successCount++
 		}
 
 		if (i+1)%5 == 0 || i+1 == len(chunks) {
-			log.Printf("   Progress: %d/%d chunks added", successCount, i+1)
+			a.logger.Infof("   Progress: %d/%d chunks added", successCount, i+1)
 		}
 
 		// Rate limiting: ~10 req/s to respect nginx limits
@@ -181,7 +182,7 @@ func (a *App) indexDocument(fileInfo os.FileInfo) error {
 		return fmt.Errorf("failed to add any chunks to database")
 	}
 
-	log.Printf("✅ Successfully added %d/%d chunks to vector database", successCount, len(chunks))
+	a.logger.Infof("✅ Successfully added %d/%d chunks to vector database", successCount, len(chunks))
 
 	relPath := filepath.Base(a.cfg.ReferenceDoc)
 	a.metadata.Files[relPath] = FileInfo{
@@ -194,16 +195,16 @@ func (a *App) indexDocument(fileInfo os.FileInfo) error {
 		return fmt.Errorf("failed to save metadata: %w", err)
 	}
 
-	log.Printf("💾 Saving vector database...")
+	a.logger.Infof("💾 Saving vector database...")
 	if err := a.saveDB(); err != nil {
 		return fmt.Errorf("failed to save database: %w", err)
 	}
 
-	log.Printf("✅ Reference document indexed successfully")
+	a.logger.Infof("✅ Reference document indexed successfully")
 	return nil
 }
 
-func readFile(path string) (string, error) {
+func (a *App) readFile(path string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 
 	switch ext {
@@ -214,13 +215,13 @@ func readFile(path string) (string, error) {
 		}
 		return string(data), nil
 	case ".pdf":
-		return readPDF(path)
+		return a.readPDF(path)
 	default:
 		return "", fmt.Errorf("unsupported file format: %s", ext)
 	}
 }
 
-func readPDF(path string) (string, error) {
+func (a *App) readPDF(path string) (string, error) {
 	f, r, err := pdf.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to open PDF: %w", err)
@@ -238,7 +239,7 @@ func readPDF(path string) (string, error) {
 
 		text, err := page.GetPlainText(nil)
 		if err != nil {
-			log.Printf("Warning: failed to extract text from page %d: %v", pageNum, err)
+			a.logger.Errorf("Warning: failed to extract text from page %d: %v", pageNum, err)
 			continue
 		}
 
@@ -287,7 +288,7 @@ func (a *App) saveMetadata() error {
 }
 
 func (a *App) loadDB() error {
-	log.Printf("Loading vector database from: %s", a.fileDB)
+	a.logger.Infof("Loading vector database from: %s", a.fileDB)
 	err := a.db.ImportFromFile(a.fileDB, "", "docs")
 	if err != nil {
 		return fmt.Errorf("failed to import DB: %w", err)
@@ -296,9 +297,9 @@ func (a *App) loadDB() error {
 	// Проверяем состояние после загрузки
 	coll := a.db.GetCollection("docs", a.embeddingFunc)
 	if coll == nil {
-		log.Printf("Warning: Collection 'docs' not found after DB load")
+		a.logger.Errorf("Warning: Collection 'docs' not found after DB load")
 	} else {
-		log.Printf("Successfully loaded vector database and found 'docs' collection")
+		a.logger.Infof("Successfully loaded vector database and found 'docs' collection")
 	}
 
 	return nil
@@ -319,12 +320,12 @@ func (a *App) validateLLMConfig() error {
 		if a.cfg.LlmMain.URL == "" {
 			return fmt.Errorf("LLM_MAIN_URL is required for openai type")
 		}
-		log.Printf("✅ LLM Main: OpenAI-compatible API at %s (model: %s)", a.cfg.LlmMain.URL, a.cfg.LlmMain.Model)
+		a.logger.Infof("✅ LLM Main: OpenAI-compatible API at %s (model: %s)", a.cfg.LlmMain.URL, a.cfg.LlmMain.Model)
 	case "gemini":
 		if a.cfg.LlmMain.Key == "" {
 			return fmt.Errorf("LLM_MAIN_KEY (Gemini API key) is required for gemini type")
 		}
-		log.Printf("✅ LLM Main: Gemini API (model: %s)", a.cfg.LlmMain.Model)
+		a.logger.Infof("✅ LLM Main: Gemini API (model: %s)", a.cfg.LlmMain.Model)
 	default:
 		return fmt.Errorf("unsupported LLM_MAIN_TYPE: %s (supported: openai, gemini)", a.cfg.LlmMain.Type)
 	}
@@ -333,7 +334,7 @@ func (a *App) validateLLMConfig() error {
 	if a.cfg.LlmEmbed.URL == "" {
 		return fmt.Errorf("LLM_EMBED_URL is required")
 	}
-	log.Printf("✅ LLM Embed: %s (model: %s)", a.cfg.LlmEmbed.URL, a.cfg.LlmEmbed.Model)
+	a.logger.Infof("✅ LLM Embed: %s (model: %s)", a.cfg.LlmEmbed.URL, a.cfg.LlmEmbed.Model)
 
 	return nil
 }

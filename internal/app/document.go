@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,12 +14,12 @@ import (
 
 // processInputDocument обрабатывает входной файл
 func (a *App) processInputDocument(ctx context.Context, filePath string) error {
-	content, err := readFile(filePath)
+	content, err := a.readFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	log.Printf("📄 File loaded: %d bytes", len(content))
+	a.logger.Infof("📄 File loaded: %d bytes", len(content))
 
 	// Определяем chunker
 	chunkr, err := a.chunkerFactory.GetChunker(filePath, a.cfg.ChunkMethod)
@@ -32,7 +31,7 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 	chunks, err := chunkr.Chunk(content, filepath.Base(filePath))
 	if err != nil {
 		// Fallback на text chunker
-		log.Printf("⚠️  Chunker failed: %v, falling back to text chunker", err)
+		a.logger.Errorf("⚠️  Chunker failed: %v, falling back to text chunker", err)
 		textChunker := chunker.NewTextChunker(chunker.Config{
 			MaxChunkSize: a.cfg.ChunkSize,
 			Overlap:      a.cfg.ChunkOverlap,
@@ -43,7 +42,7 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 		}
 	}
 
-	log.Printf("📦 Split into %d chunks\n", len(chunks))
+	a.logger.Infof("📦 Split into %d chunks", len(chunks))
 
 	// Semaphore для контроля concurrency
 	sem := make(chan struct{}, a.cfg.MaxConcurrency)
@@ -70,6 +69,7 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 			// Поиск релевантных секций
 			searchResults, err := a.searchRelevantChunks(ctx, ch.Text)
 			if err != nil {
+				a.logger.Errorf("❌ Search failed for chunk %d: %v", idx+1, err)
 				result.Error = err
 				mu.Lock()
 				results[idx] = result
@@ -80,11 +80,12 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 			result.ReferenceCount = len(searchResults)
 
 			prompt := a.buildAnalysisPrompt(ch.Text, searchResults)
-			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-			log.Printf("%s", prompt)
-			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			a.logger.Debugf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			a.logger.Debugf("%s", prompt)
+			a.logger.Debugf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 			analysis, err := a.queryLLM(ctx, prompt)
 			if err != nil {
+				a.logger.Errorf("⚠️  Failed to query LLM for chunk %d: %v", idx+1, err)
 				result.Error = err
 				mu.Lock()
 				results[idx] = result
@@ -99,11 +100,11 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 			mu.Unlock()
 
 			mu.Lock()
-			log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-			log.Printf("Chunk %d/%d: %s", result.ChunkIndex, len(chunks), result.ChunkSection)
-			log.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-			log.Printf("🔍 Found %d relevant sections", result.ReferenceCount)
-			log.Printf("\n Analysis:\n%s\n", result.Analysis)
+			a.logger.Infof("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			a.logger.Infof("Chunk %d/%d: %s", result.ChunkIndex, len(chunks), result.ChunkSection)
+			a.logger.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+			a.logger.Infof("🔍 Found %d relevant sections", result.ReferenceCount)
+			a.logger.Infof("\n Analysis:\n%s", result.Analysis)
 			mu.Unlock()
 		}(i, chunk)
 	}
@@ -122,12 +123,17 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 		}
 	}
 
-	log.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	log.Printf("📊 Summary:")
-	log.Printf("   Total chunks: %d", len(chunks))
-	log.Printf("   ✅ Analyzed: %d", successCount)
-	log.Printf("   ❌ Errors: %d", errorCount)
-	log.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	a.logger.Infof("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	a.logger.Infof("📊 Summary:")
+	a.logger.Infof("   Total chunks: %d", len(chunks))
+	a.logger.Infof("   ✅ Analyzed: %d", successCount)
+	a.logger.Infof("   ❌ Errors: %d", errorCount)
+	a.logger.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	for _, r := range results {
+		if r != nil && r.Error != nil {
+			a.logger.Errorf("   ❌ Chunk %d (%s): %v", r.ChunkIndex, r.ChunkSection, r.Error)
+		}
+	}
 
 	if a.outputPath != "" {
 		analysis := &DocumentAnalysis{
@@ -140,9 +146,9 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 		}
 
 		if err := saveAnalysisResults(analysis, a.outputPath); err != nil {
-			log.Printf("⚠️  Failed to save results: %v", err)
+			a.logger.Errorf("⚠️  Failed to save results: %v", err)
 		} else {
-			log.Printf("💾 Results saved to: %s", a.outputPath)
+			a.logger.Infof("💾 Results saved to: %s", a.outputPath)
 		}
 	}
 
