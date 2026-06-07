@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -33,7 +32,7 @@ func countTokens(text string) int {
 func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 	// Логируем размер промпта для отладки
 	tokenCount := countTokens(prompt)
-	log.Printf("📊 Prompt size: %d chars (%d tokens)", len(prompt), tokenCount)
+	a.logger.Infof("📊 Prompt size: %d chars (%d tokens)", len(prompt), tokenCount)
 
 	switch a.cfg.LlmMain.Type {
 	case "gemini":
@@ -48,7 +47,7 @@ func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 // queryOpenAI отправляет промпт в OpenAI-compatible API (llama.cpp/qwen) и возвращает ответ
 func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 	reqBody := map[string]interface{}{
-//		"model": a.cfg.LlmMain.Model,
+		//		"model": a.cfg.LlmMain.Model,
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
@@ -83,6 +82,8 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		a.logger.Errorf("LLM error response: status=%d, body=%s", resp.StatusCode, string(body))
+
 		return "", fmt.Errorf("LLM returned status %d: %s", resp.StatusCode, string(body))
 	}
 

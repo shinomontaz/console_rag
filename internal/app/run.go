@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +11,36 @@ import (
 )
 
 func (a *App) Run(ctx context.Context) error {
-	log.Println("Application started")
-	log.Println("Enter text to analyze (one per line). Ctrl+C to exit.")
+	a.logger.Infof("Application started")
+
+	if a.cfg.CheckDoc != "" {
+		a.logger.Infof("Processing check document: %s", a.cfg.CheckDoc)
+		if _, err := os.Stat(a.cfg.CheckDoc); os.IsNotExist(err) {
+			return fmt.Errorf("check document not found: %s", a.cfg.CheckDoc)
+		}
+
+		ext := filepath.Ext(a.cfg.CheckDoc)
+		if ext != ".md" && ext != ".txt" && ext != ".pdf" {
+			return fmt.Errorf("unsupported format: %s", ext)
+		}
+
+		if a.outputPath == "" {
+			timestamp := time.Now().Format("20060102_150405")
+			baseName := strings.TrimSuffix(filepath.Base(a.cfg.CheckDoc), filepath.Ext(a.cfg.CheckDoc))
+			a.outputPath = fmt.Sprintf("%s_analysis_%s.md", baseName, timestamp)
+		}
+
+		if err := a.processInputDocument(ctx, a.cfg.CheckDoc); err != nil {
+			return fmt.Errorf("failed to process check document: %w", err)
+		}
+
+		a.logger.Infof("Finished processing check document\n")
+		a.logger.Infof("Shutting down application")
+
+		return nil
+	}
+
+	a.logger.Infof("Enter text to analyze (one per line). Ctrl+C to exit.")
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -24,14 +51,16 @@ func (a *App) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Shutting down application")
+			a.logger.Infof("Shutting down application")
+
 			return nil
 		default:
 			if !scanner.Scan() {
 				if err := scanner.Err(); err != nil {
 					return fmt.Errorf("stdin error: %w", err)
 				}
-				log.Println("stdin closed")
+				a.logger.Infof("stdin closed")
+
 				return nil
 			}
 
@@ -47,14 +76,14 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) handleFile(path string) {
-	log.Printf("Received input: %s", path)
+	a.logger.Infof("Received input: %s", path)
 
 	ctx := context.Background()
 
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		ext := filepath.Ext(path)
 		if ext != ".md" && ext != ".txt" && ext != ".pdf" {
-			log.Printf("❌ Unsupported format: %s", ext)
+			a.logger.Errorf("❌ Unsupported format: %s", ext)
 			return
 		}
 
@@ -65,33 +94,34 @@ func (a *App) handleFile(path string) {
 		}
 
 		if err := a.processInputDocument(ctx, path); err != nil {
-			log.Printf("❌ Processing failed: %v", err)
+			a.logger.Errorf("❌ Processing failed: %v", err)
 		}
 
 		a.outputPath = ""
+
 		return
 	}
 
 	// Это просто текст - обрабатываем как раньше
 	results, err := a.searchRelevantChunks(ctx, path)
 	if err != nil {
-		log.Printf("❌ Search error: %v", err)
+		a.logger.Errorf("❌ Search error: %v", err)
 		return
 	}
 
-	log.Printf("🔍 Found %d relevant sections:", len(results))
+	a.logger.Infof("🔍 Found %d relevant sections:", len(results))
 	for i, r := range results {
-		log.Printf("   %d. %s (similarity: %.2f)", i+1, r.Section, r.Similarity)
+		a.logger.Infof("   %d. %s (similarity: %.2f)", i+1, r.Section, r.Similarity)
 	}
 
-	log.Printf("\n🤖 Analyzing with LLM...")
+	a.logger.Infof("\n🤖 Analyzing with LLM...")
 	prompt := a.buildAnalysisPrompt(path, results)
 
 	analysis, err := a.queryLLM(ctx, prompt)
 	if err != nil {
-		log.Printf("❌ LLM error: %v", err)
+		a.logger.Errorf("❌ LLM error: %v", err)
 		return
 	}
 
-	log.Printf("\n%s\n", analysis)
+	a.logger.Infof("\n%s", analysis)
 }

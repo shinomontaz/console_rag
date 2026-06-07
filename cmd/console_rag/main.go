@@ -18,6 +18,7 @@ func main() {
 	// Парсим флаги командной строки
 	referenceDoc := flag.String("reference-doc", "", "Path to reference document (required)")
 	dataDir := flag.String("data", "./data", "Data directory for vector DB")
+	checkDoc := flag.String("check-doc", "", "Path to check document (optional)")
 	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
 	flag.Parse()
 
@@ -34,6 +35,7 @@ func main() {
 
 	os.Setenv("REFERENCE_DOC", *referenceDoc)
 	os.Setenv("DATA_DIR", *dataDir)
+	os.Setenv("CHECK_DOC", *checkDoc)
 
 	_ = godotenv.Load()
 	cfg := config.Config{}
