@@ -22,27 +22,37 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 	a.logger.Infof("📄 File loaded: %d bytes", len(content))
 
 	// Определяем chunker
-	chunkr, err := a.chunkerFactory.GetChunker(filePath, a.cfg.ChunkMethod)
-	if err != nil {
-		return fmt.Errorf("failed to get chunker: %w", err)
-	}
 
-	// Разбиваем на чанки
-	chunks, err := chunkr.Chunk(content, filepath.Base(filePath))
-	if err != nil {
-		// Fallback на text chunker
-		a.logger.Errorf("⚠️  Chunker failed: %v, falling back to text chunker", err)
-		textChunker := chunker.NewTextChunker(chunker.Config{
-			MaxChunkSize: a.cfg.ChunkSize,
-			Overlap:      a.cfg.ChunkOverlap,
-		})
-		chunks, err = textChunker.Chunk(content, filepath.Base(filePath))
+	chunks := []chunker.Chunk{}
+	if a.cfg.RunChunker {
+		chunkr, err := a.chunkerFactory.GetChunker(filePath, a.cfg.ChunkMethod)
 		if err != nil {
-			return fmt.Errorf("text chunker failed: %w", err)
+			return fmt.Errorf("failed to get chunker: %w", err)
 		}
-	}
 
-	a.logger.Infof("📦 Split into %d chunks", len(chunks))
+		// Разбиваем на чанки
+		chunks, err = chunkr.Chunk(content, filepath.Base(filePath))
+		if err != nil {
+			// Fallback на text chunker
+			a.logger.Errorf("⚠️  Chunker failed: %v, falling back to text chunker", err)
+			textChunker := chunker.NewTextChunker(chunker.Config{
+				MaxChunkSize: a.cfg.ChunkSize,
+				Overlap:      a.cfg.ChunkOverlap,
+			})
+			chunks, err = textChunker.Chunk(content, filepath.Base(filePath))
+			if err != nil {
+				return fmt.Errorf("text chunker failed: %w", err)
+			}
+		}
+
+		a.logger.Infof("📦 Split into %d chunks", len(chunks))
+	} else {
+		chunks = append(chunks, chunker.Chunk{
+			Text:    content,
+			Section: "Full Document",
+			Source:  filepath.Base(filePath),
+		})
+	}
 
 	// Semaphore для контроля concurrency
 	sem := make(chan struct{}, a.cfg.MaxConcurrency)

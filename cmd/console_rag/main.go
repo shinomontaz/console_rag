@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"console_rag/internal/app"
@@ -20,6 +21,7 @@ func main() {
 	dataDir := flag.String("data", "./data", "Data directory for vector DB")
 	checkDoc := flag.String("check-doc", "", "Path to check document (optional)")
 	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
+	runChunker := flag.Bool("run-chunker", false, "Run chunker to process the reference document (optional)")
 	flag.Parse()
 
 	//	*referenceDoc = "../../docs/LaborCodexRus.md"
@@ -36,6 +38,7 @@ func main() {
 	os.Setenv("REFERENCE_DOC", *referenceDoc)
 	os.Setenv("DATA_DIR", *dataDir)
 	os.Setenv("CHECK_DOC", *checkDoc)
+	os.Setenv("RUN_CHUNKER", strconv.FormatBool(*runChunker))
 
 	_ = godotenv.Load()
 	cfg := config.Config{}
