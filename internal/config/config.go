@@ -30,6 +30,7 @@ type Config struct {
 	ChunkSize    int    `env:"CHUNK_SIZE" envDefault:"1000"`
 	ChunkOverlap int    `env:"CHUNK_OVERLAP" envDefault:"200"`
 	CustomPromt  Promt  `envPrefix:"CUSTOM_PROMPT_"`
+	RunChunker   bool   `env:"RUN_CHUNKER" envDefault:"true"`
 
 	// Параметры векторного поиска
 	TopK          int     `env:"TOP_K" envDefault:"5"`
