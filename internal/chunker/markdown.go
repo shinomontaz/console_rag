@@ -53,10 +53,19 @@ func (m *MarkdownChunker) Chunk(content, source string) ([]Chunk, error) {
 
 	log.Printf("📊 [%s] Document structure: headings=%v, paragraphs=%d",
 		m.Name(), structure.HeadingCounts, structure.TotalParagraphs)
-	log.Printf("🎯 [%s] Selected strategy: heading (level %d)", m.Name(), strategy.Level)
 
-	// Применяем стратегию разбиения по заголовкам
-	chunks := m.chunkByHeadings(doc, []byte(content), source, strategy.Level)
+	var chunks []Chunk
+	if strategy.Level == 0 {
+		// Разбиваем по параграфам
+		log.Printf("🎯 [%s] Selected strategy: paragraphs (AST)", m.Name())
+
+		chunks = m.chunkByParagraphsAST(doc, []byte(content), source)
+		log.Printf("✅ [%s] Created %d chunks (by paragraphs)", m.Name(), len(chunks))
+	} else {
+		// Применяем стратегию разбиения по заголовкам
+		log.Printf("🎯 [%s] Selected strategy: heading (level %d)", m.Name(), strategy.Level)
+		chunks = m.chunkByHeadings(doc, []byte(content), source, strategy.Level)
+	}
 
 	log.Printf("✅ [%s] Created %d chunks", m.Name(), len(chunks))
 	return chunks, nil
@@ -104,11 +113,98 @@ func (m *MarkdownChunker) selectStrategy(structure DocumentStructure) (ChunkingS
 		}
 	}
 
+	if structure.TotalParagraphs >= 2 {
+		return ChunkingStrategy{Level: 0}, nil // Level=0 означает "по параграфам"
+	}
+
 	// Нет подходящей markdown структуры - возвращаем ошибку
 	return ChunkingStrategy{}, fmt.Errorf(
 		"no suitable markdown structure found (headings: %v, paragraphs: %d)",
 		structure.HeadingCounts, structure.TotalParagraphs,
 	)
+}
+
+func (m *MarkdownChunker) chunkByParagraphsAST(doc ast.Node, content []byte, source string) []Chunk {
+	var paragraphs []string
+
+	// Собираем параграфы из AST — каждый параграф гарантированно целый
+	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if p, ok := n.(*ast.Paragraph); ok {
+				text := string(p.Text(content))
+				if strings.TrimSpace(text) != "" {
+					paragraphs = append(paragraphs, text)
+				}
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+
+	// Группируем параграфы в чанки до MaxChunkSize
+	var chunks []Chunk
+	var currentPart strings.Builder
+	chunkNum := 1
+	var prevParagraphs []string // для overlap — целые параграфы!
+
+	for _, para := range paragraphs {
+		if currentPart.Len() > 0 && currentPart.Len()+len(para) > m.config.MaxChunkSize {
+			// Сохраняем чанк
+			chunks = append(chunks, CreateChunk(currentPart.String(), source,
+				fmt.Sprintf("Чанк %d", chunkNum), map[string]string{
+					"method": "paragraphs-ast",
+				}))
+
+			currentPart.Reset()
+
+			// Overlap: берём последние 1-2 целых параграфа, а не N символов
+			overlapParas := m.selectOverlapParagraphs(prevParagraphs)
+			for _, op := range overlapParas {
+				currentPart.WriteString(op)
+				currentPart.WriteString("\n\n")
+			}
+
+			chunkNum++
+		}
+
+		prevParagraphs = append(prevParagraphs, para)
+		if len(prevParagraphs) > 5 { // держим только последние 5 для overlap
+			prevParagraphs = prevParagraphs[1:]
+		}
+
+		if currentPart.Len() > 0 {
+			currentPart.WriteString("\n\n")
+		}
+		currentPart.WriteString(para)
+	}
+
+	// Последний чанк
+	if currentPart.Len() > 0 {
+		chunks = append(chunks, CreateChunk(currentPart.String(), source,
+			fmt.Sprintf("Чанк %d", chunkNum), map[string]string{
+				"method": "paragraphs-ast",
+			}))
+	}
+
+	return chunks
+}
+
+// продвинутое перекрытие по целым параграфам
+func (m *MarkdownChunker) selectOverlapParagraphs(recentParas []string) []string {
+	if m.config.Overlap <= 0 || len(recentParas) == 0 {
+		return nil
+	}
+
+	// Берём параграфы с конца, пока не превысим Overlap по размеру
+	var result []string
+	totalLen := 0
+	for i := len(recentParas) - 1; i >= 0; i-- {
+		if totalLen+len(recentParas[i]) > m.config.Overlap {
+			break
+		}
+		result = append([]string{recentParas[i]}, result...)
+		totalLen += len(recentParas[i])
+	}
+	return result
 }
 
 // chunkByHeadings разбивает документ по заголовкам указанного уровня
@@ -195,23 +291,19 @@ func (m *MarkdownChunker) finalizeChunk(text, source, section, parentSection str
 	return m.splitLargeChunk(text, source, section, parentSection, level)
 }
 
-// splitLargeChunk разбивает большой чанк на части с умным overlap
 func (m *MarkdownChunker) splitLargeChunk(text, source, section, parentSection string, level int) []Chunk {
 	paragraphs := SplitByParagraphs(text)
 	var chunks []Chunk
 	var currentPart strings.Builder
 	partNum := 1
-	var prevTail string
+	var prevParagraphs []string // ← было: var prevTail string
 
-	// Определяем нужен ли overlap (только для подразделов)
 	useOverlap := level > 2 && m.config.Overlap > 0
 
 	for _, para := range paragraphs {
-		// Если добавление параграфа превысит лимит
 		if currentPart.Len() > 0 && currentPart.Len()+len(para) > m.config.MaxChunkSize {
 			partText := currentPart.String()
 
-			// Сохраняем текущую часть
 			sectionWithPart := section
 			if partNum > 1 {
 				sectionWithPart = fmt.Sprintf("%s (часть %d)", section, partNum)
@@ -228,20 +320,23 @@ func (m *MarkdownChunker) splitLargeChunk(text, source, section, parentSection s
 
 			chunks = append(chunks, CreateChunk(partText, source, sectionWithPart, metadata))
 
-			// Сохраняем хвост для overlap
-			if useOverlap {
-				prevTail = GetLastNChars(partText, m.config.Overlap)
-			}
-
 			currentPart.Reset()
 
-			// Добавляем overlap в начало новой части
-			if useOverlap && prevTail != "" {
-				currentPart.WriteString(prevTail)
-				currentPart.WriteString("\n\n")
+			if useOverlap {
+				overlapParas := m.selectOverlapParagraphs(prevParagraphs)
+				for _, op := range overlapParas {
+					currentPart.WriteString(op)
+					currentPart.WriteString("\n\n")
+				}
 			}
 
 			partNum++
+		}
+
+		// Накапливаем параграфы для overlap
+		prevParagraphs = append(prevParagraphs, para)
+		if len(prevParagraphs) > 5 {
+			prevParagraphs = prevParagraphs[1:]
 		}
 
 		if currentPart.Len() > 0 {
@@ -250,7 +345,7 @@ func (m *MarkdownChunker) splitLargeChunk(text, source, section, parentSection s
 		currentPart.WriteString(para)
 	}
 
-	// Сохраняем последнюю часть
+	// Последний чанк — без изменений
 	if currentPart.Len() > 0 {
 		sectionWithPart := section
 		if partNum > 1 {
