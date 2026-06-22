@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/ledongthuc/pdf"
 	"github.com/philippgille/chromem-go"
+	"google.golang.org/genai"
 )
 
 type App struct {
@@ -26,6 +28,9 @@ type App struct {
 	chunkerFactory *chunker.Factory
 	outputPath     string
 	logger         Logger
+
+	httpClient   *http.Client
+	geminiClient *genai.Client
 }
 
 type Metadata struct {
@@ -63,6 +68,27 @@ func New(cfg *config.Config) (*App, error) {
 	app.embeddingFunc = chromem.NewEmbeddingFuncOpenAICompat(cfg.LlmEmbed.URL, cfg.LlmEmbed.Key, cfg.LlmEmbed.Model, &normalized)
 
 	app.db = chromem.NewDB()
+
+	app.httpClient = &http.Client{
+		Timeout: 5 * time.Minute,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
+	if cfg.LlmMain.Type == "gemini" {
+		ctx := context.Background()
+		geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  cfg.LlmMain.Key,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+		}
+		app.geminiClient = geminiClient
+	}
 
 	return app, nil
 }
