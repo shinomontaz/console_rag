@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 	"unicode"
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
@@ -71,10 +70,7 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 		req.Header.Set("Authorization", "Bearer "+a.cfg.LlmMain.Key)
 	}
 
-	client := &http.Client{
-		Timeout: 5 * time.Minute, // Для больших промптов
-	}
-	resp, err := client.Do(req)
+	resp, err := a.httpClient.Do(req) // использовали общего клиента
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
@@ -108,15 +104,7 @@ func (a *App) queryOpenAI(ctx context.Context, prompt string) (string, error) {
 
 // queryGemini отправляет промпт в Gemini API и возвращает ответ
 func (a *App) queryGemini(ctx context.Context, prompt string) (string, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  a.cfg.LlmMain.Key,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create Gemini client: %w", err)
-	}
-
-	resp, err := client.Models.GenerateContent(ctx, a.cfg.LlmMain.Model, genai.Text(prompt), &genai.GenerateContentConfig{
+	resp, err := a.geminiClient.Models.GenerateContent(ctx, a.cfg.LlmMain.Model, genai.Text(prompt), &genai.GenerateContentConfig{
 		Temperature:     &a.cfg.Temperature,
 		MaxOutputTokens: int32(a.cfg.MaxTokens),
 	})
