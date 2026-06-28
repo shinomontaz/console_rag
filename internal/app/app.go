@@ -93,7 +93,7 @@ func New(cfg *config.Config) (*App, error) {
 	return app, nil
 }
 
-func (a *App) Init() error {
+func (a *App) Init(ctx context.Context) error {
 	if err := a.validateLLMConfig(); err != nil {
 		return fmt.Errorf("invalid LLM configuration: %w", err)
 	}
@@ -109,22 +109,33 @@ func (a *App) Init() error {
 		if err := a.loadDB(); err != nil {
 			return fmt.Errorf("failed to load database: %w", err)
 		}
-		_ = a.loadMetadata()
+		if err := a.loadMetadata(); err != nil {
+			a.logger.Errorf("Warning: failed to load metadata: %v", err)
+		}
 		a.logger.Infof("✅ Database loaded")
 
 		return nil
 	}
 
 	a.logger.Infof("📚 No DB found, indexing document...")
-	if err := a.indexDocument(fileInfo); err != nil {
+	if err := a.indexDocument(ctx, fileInfo); err != nil {
 		return fmt.Errorf("failed to index document: %w", err)
 	}
 
 	return nil
 }
 
-func (a *App) indexDocument(fileInfo os.FileInfo) error {
-	ctx := context.Background()
+// Shutdown освобождает ресурсы приложения
+func (a *App) Shutdown() {
+	if a.httpClient != nil {
+		if tr, ok := a.httpClient.Transport.(*http.Transport); ok {
+			tr.CloseIdleConnections()
+		}
+	}
+	a.logger.Infof("Application resources released")
+}
+
+func (a *App) indexDocument(ctx context.Context, fileInfo os.FileInfo) error {
 
 	content, err := a.readFile(a.cfg.ReferenceDoc)
 	if err != nil {
@@ -173,42 +184,28 @@ func (a *App) indexDocument(fileInfo os.FileInfo) error {
 	}
 
 	a.logger.Infof("🔄 Adding chunks to vector database...")
-	successCount := 0
+
+	// Подготавливаем документы для батчевого добавления
+	docs := make([]chromem.Document, len(chunks))
 	for i, chunk := range chunks {
-		doc := chromem.Document{
+		docs[i] = chromem.Document{
 			ID:       chunk.ID,
 			Content:  chunk.Text,
 			Metadata: chunk.Metadata,
 		}
-
-		if doc.Metadata == nil {
-			doc.Metadata = make(map[string]string)
+		if docs[i].Metadata == nil {
+			docs[i].Metadata = make(map[string]string)
 		}
-		doc.Metadata["source"] = chunk.Source
-		doc.Metadata["section"] = chunk.Section
-
-		err := coll.AddDocument(ctx, doc)
-		if err != nil {
-			a.logger.Errorf("⚠️  Failed to add chunk %d (%s): %v", i+1, chunk.ID, err)
-		} else {
-			successCount++
-		}
-
-		if (i+1)%5 == 0 || i+1 == len(chunks) {
-			a.logger.Infof("   Progress: %d/%d chunks added", successCount, i+1)
-		}
-
-		// Rate limiting: ~10 req/s to respect nginx limits
-		if i < len(chunks)-1 {
-			time.Sleep(150 * time.Millisecond)
-		}
+		docs[i].Metadata["source"] = chunk.Source
+		docs[i].Metadata["section"] = chunk.Section
 	}
 
-	if successCount == 0 {
-		return fmt.Errorf("failed to add any chunks to database")
+	// Батчевое добавление с контролем concurrency (вместо последовательного с sleep)
+	if err := coll.AddDocuments(ctx, docs, a.cfg.MaxConcurrency); err != nil {
+		return fmt.Errorf("failed to add chunks to database: %w", err)
 	}
 
-	a.logger.Infof("✅ Successfully added %d/%d chunks to vector database", successCount, len(chunks))
+	a.logger.Infof("✅ Successfully added %d chunks to vector database", len(chunks))
 
 	relPath := filepath.Base(a.cfg.ReferenceDoc)
 	a.metadata.Files[relPath] = FileInfo{
@@ -279,16 +276,6 @@ func (a *App) readPDF(path string) (string, error) {
 	}
 
 	return result, nil
-}
-
-func trimHostPrefix(addr string) string {
-	if addr == "" {
-		return "localhost"
-	}
-	if addr[0] == ':' {
-		return "127.0.0.1" + addr
-	}
-	return addr
 }
 
 func (a *App) loadMetadata() error {

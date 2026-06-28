@@ -1,20 +1,30 @@
 package chunker
 
 import (
+	"log"
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
+
+// Кэшированный regexp для замены множественных переносов
+var reMultipleNewlines = regexp.MustCompile(`\n{3,}`)
 
 func cleanChunk(content string) string {
 	// Убрать лишние пробелы и переносы
 	content = strings.TrimSpace(content)
 
 	// Убрать обрезанные слова в начале (если начинается с маленькой буквы)
-	if len(content) > 0 && unicode.IsLower(rune(content[0])) {
-		parts := strings.Fields(content)
-		if len(parts) > 1 {
-			content = strings.Join(parts[1:], " ")
+	if len(content) > 0 {
+		r, _ := utf8.DecodeRuneInString(content)
+		if unicode.IsLower(r) {
+			removed := strings.Fields(content)[0]
+			parts := strings.Fields(content)
+			if len(parts) > 1 {
+				content = strings.Join(parts[1:], " ")
+				log.Printf("🔧 cleanChunk: removed leading word %q (starts with lowercase)", removed)
+			}
 		}
 	}
 
@@ -22,8 +32,7 @@ func cleanChunk(content string) string {
 	content = strings.TrimRight(content, " -")
 
 	// Заменить множественные переносы на двойной
-	re := regexp.MustCompile(`\n{3,}`)
-	content = re.ReplaceAllString(content, "\n\n")
+	content = reMultipleNewlines.ReplaceAllString(content, "\n\n")
 
 	// Убрать лишние пробелы между словами (НЕ трогаем переносы!)
 	lines := strings.Split(content, "\n")

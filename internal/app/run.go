@@ -70,15 +70,13 @@ func (a *App) Run(ctx context.Context) error {
 			}
 
 			// Каждая строка = путь к файлу
-			a.handleFile(line)
+			a.handleFile(ctx, line)
 		}
 	}
 }
 
-func (a *App) handleFile(path string) {
+func (a *App) handleFile(ctx context.Context, path string) {
 	a.logger.Infof("Received input: %s", path)
-
-	ctx := context.Background()
 
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		ext := filepath.Ext(path)

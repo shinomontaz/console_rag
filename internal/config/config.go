@@ -30,16 +30,15 @@ type Config struct {
 	ChunkSize    int    `env:"CHUNK_SIZE" envDefault:"1000"`
 	ChunkOverlap int    `env:"CHUNK_OVERLAP" envDefault:"200"`
 	CustomPromt  Promt  `envPrefix:"CUSTOM_PROMPT_"`
-	RunChunker   bool   `env:"RUN_CHUNKER" envDefault:"true"`
+	RunChunker   bool   `env:"RUN_CHUNKER" envDefault:"false"`
 
 	// Параметры векторного поиска
 	TopK          int     `env:"TOP_K" envDefault:"5"`
 	MinSimilarity float32 `env:"MIN_SIMILARITY" envDefault:"0.6"`
 
 	// Параметры LLM (оптимизировано для gemma3)
-	MaxTokens      int     `env:"MAX_TOKENS" envDefault:"2000"`
-	Temperature    float32 `env:"TEMPERATURE" envDefault:"0.3"`
-	MaxPromptChars int     `env:"MAX_PROMPT_CHARS" envDefault:"10000"`
+	MaxTokens   int     `env:"MAX_TOKENS" envDefault:"2000"`
+	Temperature float32 `env:"TEMPERATURE" envDefault:"0.3"`
 
 	// Параметры параллельной обработки
 	MaxConcurrency int `env:"MAX_CONCURRENCY" envDefault:"3"`

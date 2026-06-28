@@ -6,41 +6,89 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
 	"google.golang.org/genai"
 )
 
+// Кэшированные объекты для производительности
+var (
+	reWhitespace = regexp.MustCompile(`\s+`)
+	tiktokenOnce sync.Once
+	tiktokenEnc  *tiktoken.Tiktoken
+)
+
 // countTokens точно подсчитывает количество токенов в тексте
 // Использует cl100k_base encoding (для GPT-4, Qwen и совместимых моделей)
 func countTokens(text string) int {
-	encoding, err := tiktoken.GetEncoding("cl100k_base")
-	if err != nil {
+	tiktokenOnce.Do(func() {
+		enc, err := tiktoken.GetEncoding("cl100k_base")
+		if err != nil {
+			// Fallback будет использоваться всегда
+			return
+		}
+		tiktokenEnc = enc
+	})
+	if tiktokenEnc == nil {
 		// Fallback на консервативную оценку для русского текста
 		return len(text) / 2
 	}
-	tokens := encoding.Encode(text, nil, nil)
+	tokens := tiktokenEnc.Encode(text, nil, nil)
 	return len(tokens)
 }
 
-// queryLLM роутер для выбора провайдера LLM
+// queryLLM роутер для выбора провайдера LLM (с retry)
 func (a *App) queryLLM(ctx context.Context, prompt string) (string, error) {
 	// Логируем размер промпта для отладки
 	tokenCount := countTokens(prompt)
 	a.logger.Infof("📊 Prompt size: %d chars (%d tokens)", len(prompt), tokenCount)
 
-	switch a.cfg.LlmMain.Type {
-	case "gemini":
-		return a.queryGemini(ctx, prompt)
-	case "openai":
-		return a.queryOpenAI(ctx, prompt)
-	default:
-		return "", fmt.Errorf("unknown LLM type: %s (supported: openai, gemini)", a.cfg.LlmMain.Type)
+	var result string
+	err := a.withRetry(ctx, 3, func() error {
+		var err error
+		switch a.cfg.LlmMain.Type {
+		case "gemini":
+			result, err = a.queryGemini(ctx, prompt)
+		case "openai":
+			result, err = a.queryOpenAI(ctx, prompt)
+		default:
+			return fmt.Errorf("unknown LLM type: %s (supported: openai, gemini)", a.cfg.LlmMain.Type)
+		}
+		return err
+	})
+	return result, err
+}
+
+// withRetry выполняет fn с exponential backoff при ошибках
+func (a *App) withRetry(ctx context.Context, maxRetries int, fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		lastErr = fn()
+		if lastErr == nil {
+			return nil
+		}
+		if attempt < maxRetries-1 {
+			delay := time.Duration(1<<uint(attempt)) * time.Second
+			a.logger.Infof("⏳ Retry %d/%d after %v: %v", attempt+1, maxRetries, delay, lastErr)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
 	}
+	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // queryOpenAI отправляет промпт в OpenAI-compatible API (llama.cpp/qwen) и возвращает ответ
@@ -140,10 +188,15 @@ func cleanContentForPrompt(content string) string {
 	content = strings.TrimSpace(content)
 
 	// Убрать обрезанные слова в начале
-	if len(content) > 0 && unicode.IsLower(rune(content[0])) {
-		parts := strings.Fields(content)
-		if len(parts) > 1 {
-			content = strings.Join(parts[1:], " ")
+	if len(content) > 0 {
+		r, _ := utf8.DecodeRuneInString(content)
+		if unicode.IsLower(r) {
+			removed := strings.Fields(content)[0]
+			parts := strings.Fields(content)
+			if len(parts) > 1 {
+				content = strings.Join(parts[1:], " ")
+				log.Printf("🔧 cleanContentForPrompt: removed leading word %q (starts with lowercase)", removed)
+			}
 		}
 	}
 
@@ -151,8 +204,7 @@ func cleanContentForPrompt(content string) string {
 	content = strings.TrimRight(content, " -,")
 
 	// Множественные пробелы → один пробел
-	re := regexp.MustCompile(`\s+`)
-	content = re.ReplaceAllString(content, " ")
+	content = reWhitespace.ReplaceAllString(content, " ")
 
 	return content
 }
