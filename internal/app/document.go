@@ -60,8 +60,6 @@ func (a *App) processInputDocument(ctx context.Context, filePath string) error {
 	var mu sync.Mutex
 	results := make([]*AnalysisResult, len(chunks))
 
-	//	chunks = chunks[:5]
-
 	var wg sync.WaitGroup
 	for i, chunk := range chunks {
 		wg.Add(1)
@@ -198,7 +196,13 @@ func saveAnalysisResults(analysis *DocumentAnalysis, outputPath string) error {
 
 	buf.WriteString("## Детальный анализ\n\n")
 	for _, result := range analysis.Results {
-		if result == nil || result.Error != nil {
+		if result == nil {
+			continue
+		}
+		if result.Error != nil {
+			buf.WriteString(fmt.Sprintf("### ⚠️ Chunk %d: %s — ОШИБКА\n\n", result.ChunkIndex, result.ChunkSection))
+			buf.WriteString(fmt.Sprintf("**Ошибка:** %s\n\n", result.Error.Error()))
+			buf.WriteString("---\n\n")
 			continue
 		}
 

@@ -60,7 +60,6 @@ func (m *MarkdownChunker) Chunk(content, source string) ([]Chunk, error) {
 		log.Printf("🎯 [%s] Selected strategy: paragraphs (AST)", m.Name())
 
 		chunks = m.chunkByParagraphsAST(doc, []byte(content), source)
-		log.Printf("✅ [%s] Created %d chunks (by paragraphs)", m.Name(), len(chunks))
 	} else {
 		// Применяем стратегию разбиения по заголовкам
 		log.Printf("🎯 [%s] Selected strategy: heading (level %d)", m.Name(), strategy.Level)
@@ -248,7 +247,10 @@ func (m *MarkdownChunker) chunkByHeadings(doc ast.Node, content []byte, source s
 					currentChunk.WriteString("\n" + headingText + "\n\n")
 				}
 			} else if textNode, ok := n.(*ast.Text); ok {
-				currentChunk.Write(textNode.Segment.Value(content))
+				// Пропускаем Text-узлы внутри Heading — они уже записаны как headingText
+				if _, isHeading := textNode.Parent().(*ast.Heading); !isHeading {
+					currentChunk.Write(textNode.Segment.Value(content))
+				}
 			}
 		} else {
 			if _, ok := n.(*ast.Paragraph); ok {

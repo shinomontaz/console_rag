@@ -47,16 +47,3 @@ func (a *App) searchRelevantChunks(
 
 	return searchResults, nil
 }
-
-// groupBySection группирует результаты по секциям
-func groupBySection(results []SearchResult) map[string][]SearchResult {
-	grouped := make(map[string][]SearchResult)
-	for _, r := range results {
-		section := r.Section
-		if section == "" {
-			section = "Unknown"
-		}
-		grouped[section] = append(grouped[section], r)
-	}
-	return grouped
-}

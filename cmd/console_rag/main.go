@@ -21,7 +21,7 @@ func main() {
 	dataDir := flag.String("data", "./data", "Data directory for vector DB")
 	checkDoc := flag.String("check-doc", "", "Path to check document (optional)")
 	outputFile := flag.String("output", "", "Save analysis results to file (optional)")
-	runChunker := flag.Bool("run-chunker", false, "Run chunker to process the reference document (optional)")
+	runChunker := flag.Bool("run-chunker", true, "Run chunker to process the reference document (optional)")
 	flag.Parse()
 
 	//	*referenceDoc = "../../docs/LaborCodexRus.md"
@@ -59,13 +59,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create app: %v", err)
 	}
+	defer a.Shutdown()
 
 	if *outputFile != "" {
 		a.SetOutputPath(*outputFile)
-	}
-
-	if err := a.Init(); err != nil {
-		log.Fatalf("failed to initialize app: %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(
@@ -74,6 +71,10 @@ func main() {
 		syscall.SIGTERM,
 	)
 	defer stop()
+
+	if err := a.Init(ctx); err != nil {
+		log.Fatalf("failed to initialize app: %v", err)
+	}
 
 	// Запускаем приложение
 	if err := a.Run(ctx); err != nil {
